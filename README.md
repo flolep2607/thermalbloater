@@ -1,40 +1,39 @@
 # 🔥 thermalbloater
 
-> The chef recommends the GPU, lightly seared, served at a rolling 80 °C.
+> The chef recommends the GPU, lightly seared and served at a steady 80 °C.
 
 ![Jensen preheating the oven](https://i.pinimg.com/originals/29/39/13/293913aaf9399fe5952b36a912f75ad6.jpg)
 
-Your GPU cost more than your fridge. It idles at 3% while you doomscroll. That's
-a waste of a perfectly good space heater.
+Your GPU probably costs more than your fridge, yet it sits at 3% utilization while you doomscroll. That is a tragic waste of a perfectly capable space heater.
 
-**thermalbloater** pins every NVIDIA GPU in the machine at full tilt with batched
-cuBLAS matrix multiplies, then backs off just enough to hold each card under a
-temperature you pick. The room gets warm. The electricity bill gets exciting.
-The GPU gets a cardio workout it never asked for.
+**thermalbloater** keeps every NVIDIA GPU in your machine busy with batched cuBLAS matrix multiplications, then automatically adjusts the workload to keep each card below a temperature limit you choose.
 
-It is basically [gpu-fryer](https://github.com/huggingface/gpu-fryer)'s
-mischievous cousin: same "hammer the card with SGEMM" engine, opposite intent.
-gpu-fryer wants to *catch* a weak GPU. thermalbloater just wants to keep you cozy.
+The room gets warmer. The power bill gets more interesting. Your GPU finally gets the workout it never requested.
 
-## What it actually does
+It is essentially the mischievous cousin of [gpu-fryer](https://github.com/huggingface/gpu-fryer): the same general idea of hammering the GPU with SGEMM workloads, but with a very different objective. `gpu-fryer` tries to expose unstable hardware. `thermalbloater` is mostly here to keep you cozy.
 
-- 🍳 Runs a batched SGEMM burn load on **every** CUDA device it finds — plug in
-  four GPUs, fry four GPUs.
-- 🌡️ Per-GPU thermostat: each card throttles its own duty cycle to stay under
-  `--gpu-max` (default 80 °C). Hot card slows down, cool card keeps cooking.
-- 🎛️ One binary runs on **any CUDA 11 / 12 / 13** install. The CUDA libraries are
-  loaded at runtime, so you don't need a toolkit to build it and you don't need a
-  matching version to run it.
-- 🐧🪟 Prebuilt binaries for Linux and Windows on every release.
+## What it does
 
-## Install
+* 🍳 Runs batched SGEMM workloads on **every CUDA-capable GPU** it finds. Install four GPUs, heat the room with all four.
+* 🌡️ Uses a separate thermostat for each GPU. A hot card reduces its duty cycle while cooler cards continue running at full load.
+* 🎛️ Supports **CUDA 11, 12, and 13** with a single binary. CUDA libraries are loaded dynamically at runtime, so you do not need the CUDA toolkit to build the project or an exact toolkit version match to run it.
+* 🐧 🪟 Provides prebuilt Linux and Windows binaries with every release.
 
-Grab a binary from [Releases](../../releases) and run it. That's it.
+## Installation
 
-You need an NVIDIA GPU, a working driver, and cuBLAS somewhere on your system
-(any CUDA 11/12/13 runtime provides it). If `nvidia-smi` works, you're good.
+Download the appropriate binary from [Releases](../../releases), then run it.
 
-Or build it yourself — no CUDA toolkit required, just Rust:
+You need:
+
+* An NVIDIA GPU
+* A working NVIDIA driver
+* A CUDA 11, 12, or 13 runtime containing cuBLAS
+
+As a practical rule, if `nvidia-smi` works and cuBLAS is installed, you should be ready to start wasting electricity productively.
+
+### Build from source
+
+No CUDA toolkit is required. You only need Rust:
 
 ```sh
 cargo build --release
@@ -42,54 +41,60 @@ cargo build --release
 
 ## Usage
 
-```
+```text
 thermalbloater [matrix-size] [batch-size] [--gpu-max C] [--status-interval SECONDS]
 ```
 
+### Examples
+
 ```sh
-# Preheat the room, keep every GPU under 80 °C
+# Preheat the room and keep every GPU below 80 °C
 thermalbloater
 
-# Gentle simmer — cap at 70 °C
+# Gentle simmer at 70 °C
 thermalbloater --gpu-max 70
 
-# Full send — bigger matrices, cap at 85 °C, chunky VRAM footprint
+# Larger matrices, higher temperature limit, and a chunkier VRAM footprint
 thermalbloater 1024 64 --gpu-max 85
 ```
 
-Live status looks like:
+A typical status display looks like this:
 
-```
+```text
 Frying 2 GPU(s): 32 batched 512x512 SGEMMs each (~96 MiB VRAM/GPU). Press Ctrl+C to stop.
 Thermostat: GPU max 80C (per GPU).
 GPU0 78C 310W 45% | GPU1 71C 285W 100% | CPU 62C (Package)
 ```
 
-Press `Ctrl+C` when the room is warm enough (or when the electricity bill texts you).
+Press `Ctrl+C` when the room is warm enough, or when your electricity provider begins asking personal questions.
 
-### Flags
+## Options
 
-| Flag | Default | Does |
-|------|---------|------|
-| `matrix-size` (positional) | `512` | N for the N×N matmuls. Bigger = more heat & VRAM. |
-| `batch-size` (positional) | `32` | How many matmuls per batch. |
-| `--gpu-max C` | `80` | Temperature ceiling per GPU. Card eases off as it approaches. |
-| `--status-interval S` | `2` | Seconds between status updates. |
+| Option                | Default | Description                                                                                                  |
+| --------------------- | ------: | ------------------------------------------------------------------------------------------------------------ |
+| `matrix-size`         |   `512` | Matrix dimension `N` for each `N × N` multiplication. Larger values use more VRAM and may produce more heat. |
+| `batch-size`          |    `32` | Number of matrix multiplications submitted per batch.                                                        |
+| `--gpu-max C`         |    `80` | Maximum target temperature for each GPU. The workload is reduced as the card approaches this limit.          |
+| `--status-interval S` |     `2` | Number of seconds between status updates.                                                                    |
 
-## The fine print (please read this one)
+## Safety and limitations
 
-This is a tool for **deliberately running your own hardware hot**. That's the
-entire point. Only run it on GPUs you own, on power you're paying for, in a case
-with cooling that actually works.
+This tool is designed to **deliberately run your own hardware under sustained load**. That is not an accidental side effect. It is the whole ridiculous idea.
 
-- It will not exceed `--gpu-max`, but "not overheating" still means "running hot
-  for a long time." Dust, bad airflow, and sketchy PSUs do not care about your
-  thermostat.
-- If NVML can't read your GPU's temperature, there's **no cap** and it runs
-  flat-out. The status line will yell `NVML unavailable, running uncapped` at you.
-  Believe it.
-- No warranty, express or implied, including but not limited to fitness for
-  cooking an actual egg on your GPU. If you brick something, you got to keep both
-  halves.
+Only use it on hardware you own, with adequate cooling, a reliable power supply, and electricity you are prepared to pay for.
+
+* `thermalbloater` attempts to keep each GPU below `--gpu-max`, but sustained operation near that temperature still places the hardware under significant thermal and electrical load.
+* Dust, poor airflow, failing fans, unstable overclocks, and questionable power supplies can still cause problems. Software cannot negotiate with physics, despite decades of human effort.
+* If NVML cannot report a GPU's temperature, that GPU cannot be temperature-limited and will run at full load. The status output will display:
+
+  ```text
+  NVML unavailable, running uncapped
+  ```
+
+  Take that warning seriously.
+* Temperature readings and throttling behaviour depend on the GPU, driver, firmware, cooling system, and operating environment.
+* This software is provided without warranty. There is no guarantee of fitness for any purpose, including heating a room, validating hardware, or cooking an egg directly on the backplate.
+
+Use common sense, monitor your hardware, and stop the program if anything looks, smells, or sounds wrong.
 
 Stay warm. 🔥
