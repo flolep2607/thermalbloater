@@ -63,7 +63,7 @@ A typical status display looks like this:
 ```text
 Frying 2 GPU(s): 32 batched 512x512 SGEMMs each (~96 MiB VRAM/GPU). Press Ctrl+C to stop.
 Thermostat: GPU max 80C (per GPU).
-GPU0 78C 310W 45% | GPU1 71C 285W 100% | CPU 62C (Package)
+GPU0 78C 310W 45% | GPU1 71C 285W 100%
 ```
 
 Press `Ctrl+C` when the room is warm enough, or when your electricity provider begins asking personal questions.

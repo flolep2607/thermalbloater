@@ -6,7 +6,6 @@ use std::io::{self, Write};
 use std::panic;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use sysinfo::Components;
 
 const DEFAULT_MATRIX_SIZE: usize = 512;
 const DEFAULT_BATCH_SIZE: usize = 32;
@@ -49,8 +48,9 @@ fn run() -> Result<(), String> {
     );
     eprintln!("{}", cfg.thermostat.describe());
 
-    let mut sensors = Sensors::new();
+    let sensors = Sensors::new();
     let mut loads = vec![1.0f32; workers.len()];
+    let mut credit = vec![0.0f32; workers.len()];
     let mut next_status = Instant::now();
     loop {
         if Instant::now() >= next_status {
@@ -60,40 +60,49 @@ fn run() -> Result<(), String> {
                 .iter()
                 .map(|r| cfg.thermostat.gpu_load(r.as_ref()))
                 .collect();
-            let cpu = sensors.cpu_temp();
-            print_status(&readings, &loads, cpu.as_ref());
+            print_status(&readings, &loads);
             next_status += cfg.status_interval;
         }
 
-        let active: Vec<usize> = (0..workers.len()).filter(|&i| loads[i] > 0.0).collect();
-        if active.is_empty() {
+        // Per-GPU duty cycle: each GPU accrues its own `load` in credit per tick and
+        // launches a batch when it reaches 1.0, so a card at 0.45 runs ~45% of the ticks
+        // a full-load card runs. Loop cadence is set by whichever GPUs actually launch, so
+        // full-load cards stay saturated no matter how throttled their neighbours are.
+        let mut launched = Vec::new();
+        for i in 0..workers.len() {
+            if tick_credit(&mut credit[i], loads[i]) {
+                workers[i].launch(n, batch_size, matrix_elements)?;
+                launched.push(i);
+            }
+        }
+        if launched.is_empty() {
+            // ponytail: a lone lightly-throttled GPU runs cooler than its target here (this
+            // idle sleep stretches its cadence). Per-GPU threads if you ever need it exact.
             std::thread::sleep(CONTROL_SLEEP);
             continue;
         }
-
-        let started = Instant::now();
-        for &i in &active {
-            workers[i].launch(n, batch_size, matrix_elements)?;
-        }
-        for &i in &active {
+        for &i in &launched {
             workers[i]
                 .dev
                 .synchronize()
                 .map_err(|err| format!("CUDA synchronize failed on GPU {i}: {err:?}"))?;
         }
-        let min_load = active.iter().map(|&i| loads[i]).fold(1.0f32, f32::min);
-        sleep_for_load(min_load, started.elapsed());
     }
 }
 
-fn sleep_for_load(load: f32, work_time: Duration) {
-    if load >= 0.999 {
-        return;
+/// Advances one GPU's duty-cycle credit by `load` and reports whether it should launch
+/// this tick. Credit stays in `[0, 1)`, so launch frequency converges to `load`.
+fn tick_credit(credit: &mut f32, load: f32) -> bool {
+    if load <= 0.0 {
+        *credit = 0.0;
+        return false;
     }
-
-    let cycle = work_time.mul_f32(1.0 / load);
-    if cycle > work_time {
-        std::thread::sleep(cycle - work_time);
+    *credit += load;
+    if *credit >= 1.0 {
+        *credit -= 1.0;
+        true
+    } else {
+        false
     }
 }
 
@@ -164,14 +173,12 @@ impl GpuWorker {
 
 struct Sensors {
     nvml: Option<Nvml>,
-    components: Components,
 }
 
 impl Sensors {
     fn new() -> Self {
         Self {
             nvml: Nvml::init().ok(),
-            components: Components::new_with_refreshed_list(),
         }
     }
 
@@ -183,31 +190,9 @@ impl Sensors {
             power_w: device.power_usage().ok()? as f32 / 1000.0,
         })
     }
-
-    fn cpu_temp(&mut self) -> Option<TemperatureReading> {
-        self.components.refresh(false);
-        let sensors = self.temperature_sensors();
-        hottest_cpu_sensor(&sensors).or_else(|| hottest_sensor(&sensors))
-    }
-
-    fn temperature_sensors(&self) -> Vec<TemperatureReading> {
-        self.components
-            .iter()
-            .filter_map(|component| {
-                let temperature_c = component.temperature()?;
-                if temperature_c.is_nan() {
-                    return None;
-                }
-                Some(TemperatureReading {
-                    label: component.label().to_string(),
-                    temperature_c,
-                })
-            })
-            .collect()
-    }
 }
 
-fn print_status(readings: &[Option<GpuStatus>], loads: &[f32], cpu: Option<&TemperatureReading>) {
+fn print_status(readings: &[Option<GpuStatus>], loads: &[f32]) {
     let mut fields = Vec::new();
 
     for (reading, load) in readings.iter().zip(loads) {
@@ -221,10 +206,6 @@ fn print_status(readings: &[Option<GpuStatus>], loads: &[f32], cpu: Option<&Temp
             )),
             None => fields.push("GPU ?".to_string()),
         }
-    }
-
-    if let Some(cpu) = cpu {
-        fields.push(format!("CPU {:.0}C ({})", cpu.temperature_c, cpu.label));
     }
 
     if readings.iter().all(Option::is_none) {
@@ -243,38 +224,6 @@ struct GpuStatus {
     ordinal: usize,
     temperature_c: u32,
     power_w: f32,
-}
-
-#[derive(Clone)]
-struct TemperatureReading {
-    label: String,
-    temperature_c: f32,
-}
-
-fn hottest_cpu_sensor(sensors: &[TemperatureReading]) -> Option<TemperatureReading> {
-    hottest_matching_sensor(sensors, |sensor| {
-        let text = sensor.label.to_lowercase();
-        text.contains("cpu")
-            || text.contains("core")
-            || text.contains("package")
-            || text.contains("k10temp")
-            || text.contains("zenpower")
-    })
-}
-
-fn hottest_sensor(sensors: &[TemperatureReading]) -> Option<TemperatureReading> {
-    hottest_matching_sensor(sensors, |_| true)
-}
-
-fn hottest_matching_sensor(
-    sensors: &[TemperatureReading],
-    matches: impl Fn(&TemperatureReading) -> bool,
-) -> Option<TemperatureReading> {
-    sensors
-        .iter()
-        .filter(|sensor| matches(sensor))
-        .max_by(|a, b| a.temperature_c.total_cmp(&b.temperature_c))
-        .cloned()
 }
 
 struct Config {
@@ -463,5 +412,28 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
         message.to_string()
     } else {
         "unknown panic while loading CUDA".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tick_credit;
+
+    #[test]
+    fn launch_fraction_converges_to_load() {
+        for &load in &[0.15f32, 0.45, 0.5, 1.0] {
+            let mut credit = 0.0;
+            let ticks = 100_000;
+            let launches = (0..ticks).filter(|_| tick_credit(&mut credit, load)).count();
+            let frac = launches as f32 / ticks as f32;
+            assert!((frac - load).abs() < 0.001, "load {load}: got {frac}");
+        }
+    }
+
+    #[test]
+    fn zero_load_never_launches_and_resets_credit() {
+        let mut credit = 0.7;
+        assert!(!tick_credit(&mut credit, 0.0));
+        assert_eq!(credit, 0.0);
     }
 }
