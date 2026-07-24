@@ -14,7 +14,8 @@ It is essentially the mischievous cousin of [gpu-fryer](https://github.com/huggi
 
 ## What it does
 
-* 🍳 Runs batched SGEMM workloads on **every CUDA-capable GPU** it finds. Install four GPUs, heat the room with all four.
+* 🍳 Runs batched GEMM workloads on **every CUDA-capable GPU** it finds. Install four GPUs, heat the room with all four.
+* 🔥 **Autotunes each GPU for peak power draw.** On startup it sweeps math type (`f32` / `f16` / `bf16` — CUDA cores vs. tensor cores) and matrix size, measures the actual watts each config pulls, and keeps the hottest one. A GTX 1060 and an H100 want completely different workloads to redline; the tool finds each card's on its own instead of guessing.
 * 🌡️ Uses a separate thermostat for each GPU. A hot card reduces its duty cycle while cooler cards continue running at full load.
 * 🎛️ Supports **CUDA 11, 12, and 13** with a single binary. CUDA libraries are loaded dynamically at runtime, so you do not need the CUDA toolkit to build the project or an exact toolkit version match to run it.
 * 🐧 🪟 Provides prebuilt Linux and Windows binaries with every release.
@@ -42,29 +43,37 @@ cargo build --release
 ## Usage
 
 ```text
-thermalbloater [matrix-size] [batch-size] [--gpu-max C] [--status-interval SECONDS]
+thermalbloater [matrix-size] [batch-size] [--math f32|f16|bf16] [--gpu-max C] [--calibrate-secs S] [--status-interval SECONDS]
 ```
+
+By default, with no positional arguments, thermalbloater **autotunes**: it briefly runs each candidate workload on every GPU, reads the power draw from NVML, and locks in whichever config pulls the most watts on that specific card. Pin any axis yourself and it drops out of the sweep — pin all three (size, batch, math) and it skips autotuning entirely.
 
 ### Examples
 
 ```sh
-# Preheat the room and keep every GPU below 80 °C
+# Autotune every GPU for peak watts, keep each below 80 °C
 thermalbloater
 
-# Gentle simmer at 70 °C
-thermalbloater --gpu-max 70
+# Autotune, but only ever use tensor-core FP16, simmering at 70 °C
+thermalbloater --math f16 --gpu-max 70
 
-# Larger matrices, higher temperature limit, and a chunkier VRAM footprint
-thermalbloater 1024 64 --gpu-max 85
+# Fully manual: fixed size, batch, and math — no autotuning
+thermalbloater 1024 64 --math bf16 --gpu-max 85
 ```
 
-A typical status display looks like this:
+A typical run looks like this:
 
 ```text
-Frying 2 GPU(s): 32 batched 512x512 SGEMMs each (~96 MiB VRAM/GPU). Press Ctrl+C to stop.
+Calibrating 1 GPU(s) for peak power draw...
+  GPU0 f32 4096x4096 SGEMM x11 (~2112 MiB VRAM) -> 231 W
+  GPU0 f16 2048x2048 SGEMM x93 (~2232 MiB VRAM) -> 199 W
+  ...
+GPU0: f32 4096x4096 SGEMM x11 (~2112 MiB VRAM)
 Thermostat: GPU max 80C (per GPU).
-GPU0 78C 310W 45% | GPU1 71C 285W 100%
+GPU0 78C 234W 100%
 ```
+
+(On this RTX 3070, plain FP32 out-draws the tensor-core paths — on a bigger card the winner will often be `f16` or `bf16`. That's the whole point of measuring instead of assuming.)
 
 Press `Ctrl+C` when the room is warm enough, or when your electricity provider begins asking personal questions.
 
@@ -72,9 +81,11 @@ Press `Ctrl+C` when the room is warm enough, or when your electricity provider b
 
 | Option                | Default | Description                                                                                                  |
 | --------------------- | ------: | ------------------------------------------------------------------------------------------------------------ |
-| `matrix-size`         |   `512` | Matrix dimension `N` for each `N × N` multiplication. Larger values use more VRAM and may produce more heat. |
-| `batch-size`          |    `32` | Number of matrix multiplications submitted per batch.                                                        |
+| `matrix-size`         |  autotuned | Matrix dimension `N` for each `N × N` multiplication. Pinning it skips the size sweep. |
+| `batch-size`          |  autotuned | Number of matrix multiplications submitted per batch. Pinning it skips VRAM-based batch sizing. |
+| `--math f32\|f16\|bf16` | autotuned | Arithmetic type: `f32` (CUDA cores) or `f16`/`bf16` (tensor cores). Pinning it skips the math sweep. |
 | `--gpu-max C`         |    `80` | Maximum target temperature for each GPU. The workload is reduced as the card approaches this limit.          |
+| `--calibrate-secs S`  |     `4` | Seconds spent measuring each candidate config during autotuning. |
 | `--status-interval S` |     `2` | Number of seconds between status updates.                                                                    |
 
 ## Safety and limitations
@@ -85,6 +96,7 @@ Only use it on hardware you own, with adequate cooling, a reliable power supply,
 
 * `thermalbloater` attempts to keep each GPU below `--gpu-max`, but sustained operation near that temperature still places the hardware under significant thermal and electrical load.
 * Dust, poor airflow, failing fans, unstable overclocks, and questionable power supplies can still cause problems. Software cannot negotiate with physics, despite decades of human effort.
+* Autotuning needs NVML to read power draw. Without it, thermalbloater cannot measure watts and falls back to a safe default config (or whatever you pin manually).
 * If NVML cannot report a GPU's temperature, that GPU cannot be temperature-limited and will run at full load. The status output will display:
 
   ```text

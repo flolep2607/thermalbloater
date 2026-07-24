@@ -4,5 +4,6 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-cudarc = { version = "0.12.1", default-features = false, features = ["std", "cublas", "cuda-12000"] }
+cudarc = { version = "0.12.1", default-features = false, features = ["std", "cublas", "cuda-12000", "f16"] }
+half = "2.4.1"
 nvml-wrapper = "0.12.1"
