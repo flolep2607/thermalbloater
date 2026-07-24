@@ -1,0 +1,9 @@
+[package]
+name = "thermalbloater"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cudarc = { version = "0.12.1", default-features = false, features = ["std", "cublas", "cuda-12000"] }
+nvml-wrapper = "0.12.1"
+sysinfo = { version = "0.39.3", default-features = false, features = ["component"] }

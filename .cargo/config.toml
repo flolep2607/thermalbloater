@@ -1,0 +1,11 @@
+# WSL/Linux runtime search paths for the dynamically-loaded CUDA libs.
+# Scoped to the Linux target so it never reaches the Windows (MSVC) build.
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C",
+    "link-arg=-Wl,-rpath,/usr/lib/wsl/lib",
+    "-C",
+    "link-arg=-Wl,-rpath,/usr/local/cuda/targets/x86_64-linux/lib",
+    "-C",
+    "link-arg=-Wl,-rpath,/usr/local/cuda/lib64",
+]
