@@ -47,7 +47,10 @@ fn run() -> Result<(), String> {
     let sensors = Sensors::new();
 
     // Per-GPU calibration: find the (math, size, batch) that pulls the most watts on each card.
-    eprintln!("Calibrating {} GPU(s) for peak power draw...", workers.len());
+    eprintln!(
+        "Calibrating {} GPU(s) for peak power draw...",
+        workers.len()
+    );
     for worker in &mut workers {
         let chosen = calibrate(worker, &sensors, &cfg)?;
         worker.reconfigure(chosen)?;
@@ -62,14 +65,18 @@ fn run() -> Result<(), String> {
     let mut next_status = Instant::now();
     loop {
         if Instant::now() >= next_status {
-            let readings: Vec<Option<GpuStatus>> =
-                workers.iter().map(|w| sensors.gpu_status(w.ordinal)).collect();
+            let readings: Vec<Option<GpuStatus>> = workers
+                .iter()
+                .map(|w| sensors.gpu_status(w.ordinal))
+                .collect();
             loads = readings
                 .iter()
                 .map(|r| cfg.thermostat.gpu_load(r.as_ref()))
                 .collect();
             print_status(&readings, &loads);
-            next_status += cfg.status_interval;
+            // Interval from *now*, not from the last deadline: one launch can outlast the
+            // interval, and `+=` would then burst a catch-up status on every tick.
+            next_status = Instant::now() + cfg.status_interval;
         }
 
         // Per-GPU duty cycle: each GPU accrues its own `load` in credit per tick and
@@ -188,8 +195,14 @@ fn calibrate(worker: &mut GpuWorker, sensors: &Sensors, cfg: &Config) -> Result<
         .map(|free| (free as f64 * VRAM_BUDGET_FRAC) as usize);
 
     // No power feedback (no NVML) or fully-pinned config -> skip the sweep.
-    let maths: Vec<Math> = cfg.math.map(|m| vec![m]).unwrap_or_else(|| Math::ALL.to_vec());
-    let sizes: Vec<usize> = cfg.size.map(|s| vec![s]).unwrap_or_else(|| SWEEP_SIZES.to_vec());
+    let maths: Vec<Math> = cfg
+        .math
+        .map(|m| vec![m])
+        .unwrap_or_else(|| Math::ALL.to_vec());
+    let sizes: Vec<usize> = cfg
+        .size
+        .map(|s| vec![s])
+        .unwrap_or_else(|| SWEEP_SIZES.to_vec());
     let fully_pinned = maths.len() == 1 && sizes.len() == 1 && cfg.batch.is_some();
 
     if budget.is_none() || fully_pinned {
@@ -199,8 +212,15 @@ fn calibrate(worker: &mut GpuWorker, sensors: &Sensors, cfg: &Config) -> Result<
             batch: cfg.batch.unwrap_or(FALLBACK.batch),
         };
         if budget.is_none() && !fully_pinned {
-            eprintln!("GPU{}: NVML unavailable, cannot autotune - using fallback.", worker.ordinal);
-            return Ok(if cfg.size.is_some() || cfg.math.is_some() { chosen } else { FALLBACK });
+            eprintln!(
+                "GPU{}: NVML unavailable, cannot autotune - using fallback.",
+                worker.ordinal
+            );
+            return Ok(if cfg.size.is_some() || cfg.math.is_some() {
+                chosen
+            } else {
+                FALLBACK
+            });
         }
         return Ok(chosen);
     }
@@ -236,7 +256,10 @@ fn calibrate(worker: &mut GpuWorker, sensors: &Sensors, cfg: &Config) -> Result<
     }
 
     best.map(|(c, _)| c).ok_or_else(|| {
-        format!("GPU{}: no burn config was runnable during calibration", worker.ordinal)
+        format!(
+            "GPU{}: no burn config was runnable during calibration",
+            worker.ordinal
+        )
     })
 }
 
@@ -261,11 +284,11 @@ fn measure(
     while Instant::now() < deadline {
         worker.launch().ok()?;
         worker.dev.synchronize().ok()?;
-        if Instant::now() >= midpoint {
-            if let Some(w) = sensors.power(worker.ordinal) {
-                sum += w;
-                samples += 1;
-            }
+        if Instant::now() >= midpoint
+            && let Some(w) = sensors.power(worker.ordinal)
+        {
+            sum += w;
+            samples += 1;
         }
     }
     (samples > 0).then(|| sum / samples as f32)
@@ -353,6 +376,7 @@ impl GpuWorker {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn alloc3<T: DeviceRepr + ValidAsZeroBits>(
     dev: &Arc<CudaDevice>,
     len: usize,
@@ -365,6 +389,7 @@ fn alloc3<T: DeviceRepr + ValidAsZeroBits>(
     Ok((mk("A")?, mk("B")?, mk("C")?))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn launch_typed<T>(
     cublas: &CudaBlas,
     cfg: &RunConfig,
@@ -500,7 +525,14 @@ impl Config {
         let mut args = std::env::args().skip(1).peekable();
         while let Some(arg) = args.next() {
             match arg.as_str() {
-                "-h" | "--help" => return Err(usage()),
+                "-h" | "--help" => {
+                    println!("{}", usage());
+                    std::process::exit(0);
+                }
+                "-V" | "--version" => {
+                    println!("thermalbloater {}", env!("CARGO_PKG_VERSION"));
+                    std::process::exit(0);
+                }
                 "--gpu-max" => {
                     let value = next_arg(&mut args, "--gpu-max")?;
                     thermostat.gpu_max_c = parse_gpu_max(&value)?;
@@ -539,15 +571,15 @@ impl Config {
             .map(|value| parse_positive_usize(value, "batch size"))
             .transpose()?;
 
-        if let Some(s) = size {
-            if s > i32::MAX as usize {
-                return Err("matrix size must fit in i32".to_string());
-            }
+        if let Some(s) = size
+            && s > i32::MAX as usize
+        {
+            return Err("matrix size must fit in i32".to_string());
         }
-        if let Some(b) = batch {
-            if b > i32::MAX as usize {
-                return Err("batch size must fit in i32".to_string());
-            }
+        if let Some(b) = batch
+            && b > i32::MAX as usize
+        {
+            return Err("batch size must fit in i32".to_string());
         }
         Ok(Self {
             math,
@@ -628,7 +660,7 @@ fn parse_math(value: &str) -> Result<Math, String> {
 
 fn usage() -> String {
     "Usage: thermalbloater [matrix-size] [batch-size] [--math f32|f16|bf16] \
-     [--gpu-max C] [--calibrate-secs S] [--status-interval S]\n\
+     [--gpu-max C] [--calibrate-secs S] [--status-interval S] [--version]\n\
      Autotunes per-GPU for peak watts unless you pin size/batch/math."
         .to_string()
 }
@@ -696,14 +728,16 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{batch_for, tick_credit, Math};
+    use super::{Math, batch_for, tick_credit};
 
     #[test]
     fn launch_fraction_converges_to_load() {
         for &load in &[0.15f32, 0.45, 0.5, 1.0] {
             let mut credit = 0.0;
             let ticks = 100_000;
-            let launches = (0..ticks).filter(|_| tick_credit(&mut credit, load)).count();
+            let launches = (0..ticks)
+                .filter(|_| tick_credit(&mut credit, load))
+                .count();
             let frac = launches as f32 / ticks as f32;
             assert!((frac - load).abs() < 0.001, "load {load}: got {frac}");
         }

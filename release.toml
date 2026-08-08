@@ -1,0 +1,7 @@
+# cargo-release config. `cargo release patch --execute` bumps the version,
+# commits, tags v<version> and pushes — the tag push triggers .github/workflows/release.yml.
+tag-name = "v{{version}}"
+tag-message = "thermalbloater {{version}}"
+pre-release-commit-message = "Bump version to {{version}}"
+publish = false          # not a crates.io crate: binaries ship via GitHub Releases
+sign-tag = false

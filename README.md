@@ -40,6 +40,37 @@ No CUDA toolkit is required. You only need Rust:
 cargo build --release
 ```
 
+### Heat the room on a schedule (Linux)
+
+Electricity is cheapest — and rooms are coldest — in the evening. One line downloads the latest release, installs it, and schedules a daily heating window (default **17:00 → 22:00**):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/flolep2607/thermalbloater/main/packaging/install.sh | sudo sh
+
+# Custom window and options
+curl -fsSL .../install.sh | sudo START=20 END=23 ARGS="--gpu-max 70 --math f16" sh
+
+# Or from a clone, using your own build
+cargo build --release && sudo ./packaging/install.sh
+```
+
+It uses **systemd** when systemd is running (a timer starts the run, `RuntimeMaxSec` hard-stops it at the end hour) and falls back to **crontab** when it is not — WSL and containers included. Either way it also installs a daily self-update job that pulls the latest release binary; the new version takes effect at the next start, never mid-run.
+
+Change the window by re-running the installer with different `START`/`END`. Skip the updater with `NO_UPDATE=1`. Remove everything — units, cron lines, both binaries:
+
+```sh
+sudo UNINSTALL=1 ./packaging/install.sh
+```
+
+Booting *inside* the window skips that evening rather than starting a run that would burn past the end hour.
+
+On Windows, the same idea in one line — Task Scheduler starts it, `RuntimeMaxSec` becomes a matching stop task:
+
+```powershell
+schtasks /create /tn thermalbloater /tr "C:\path\thermalbloater.exe" /sc daily /st 17:00
+schtasks /create /tn thermalbloater-stop /tr "taskkill /im thermalbloater.exe /f" /sc daily /st 22:00
+```
+
 ## Usage
 
 ```text
@@ -87,6 +118,17 @@ Press `Ctrl+C` when the room is warm enough, or when your electricity provider b
 | `--gpu-max C`         |    `80` | Maximum target temperature for each GPU. The workload is reduced as the card approaches this limit.          |
 | `--calibrate-secs S`  |     `4` | Seconds spent measuring each candidate config during autotuning. |
 | `--status-interval S` |     `2` | Number of seconds between status updates.                                                                    |
+
+## Releasing
+
+CI (`.github/workflows/ci.yml`) runs `fmt`, `clippy -D warnings`, tests and a release build on Linux and Windows for every push and PR. Cutting a release is one command:
+
+```sh
+cargo install cargo-release   # once
+cargo release patch --execute # or minor / major
+```
+
+That bumps the version, commits, tags `vX.Y.Z` and pushes. The tag push triggers `release.yml`, which builds the Linux and Windows binaries and attaches them to a GitHub Release.
 
 ## Safety and limitations
 
