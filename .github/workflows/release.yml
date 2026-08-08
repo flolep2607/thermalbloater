@@ -32,7 +32,7 @@ jobs:
 
       # No CUDA toolkit needed: cudarc + nvml-wrapper load the CUDA/NVML
       # libraries at runtime, so the build has no link-time GPU dependency.
-      - run: cargo build --release --target ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Stage binary
         shell: bash
