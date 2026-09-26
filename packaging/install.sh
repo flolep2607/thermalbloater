@@ -45,7 +45,8 @@ if [ -n "${UNINSTALL:-}" ]; then
     exit 0
 fi
 
-[ "$END" -gt "$START" ] || { echo "END ($END) must be later than START ($START)" >&2; exit 1; }
+[ "$START" -ge 0 ] && [ "$END" -le 23 ] && [ "$END" -gt "$START" ] ||
+    { echo "need 0 <= START < END <= 23 (whole hours), got START=$START END=$END" >&2; exit 1; }
 
 # Never write over the running binary in place (ETXTBSY): stage next to it and rename,
 # which swaps the inode atomically and leaves any running instance on the old one.
@@ -77,6 +78,9 @@ tmp=\$(mktemp)
 trap 'rm -f "\$tmp"' EXIT
 curl -fsSL "$URL" -o "\$tmp"
 cmp -s "\$tmp" "$BIN_PATH" && exit 0
+chmod 755 "\$tmp"
+# Refuse a release that doesn't even start (wrong arch, truncated, not a binary).
+"\$tmp" --version >/dev/null || { echo "downloaded binary failed to run; keeping the old one" >&2; exit 1; }
 install -m 755 "\$tmp" "$BIN_PATH.new"
 mv "$BIN_PATH.new" "$BIN_PATH"
 echo "thermalbloater updated; the new binary is used from the next run."
@@ -85,6 +89,9 @@ chmod 755 "$UPDATE_PATH"
 [ -n "${NO_UPDATE:-}" ] && rm -f "$UPDATE_PATH"
 
 if have_systemd; then
+    # Some distros make /dev/nvidia* group-only; join whichever GPU groups exist.
+    groups=$(for g in video render; do getent group "$g" >/dev/null && printf '%s ' "$g"; done; true)
+    GPU_GROUPS=${groups:+SupplementaryGroups=$groups}
     cat > "$UNIT_DIR/thermalbloater.service" <<EOF
 [Unit]
 Description=thermalbloater (GPU space heater)
@@ -96,6 +103,10 @@ ExecStart=$BIN_PATH $ARGS
 RuntimeMaxSec=$(( (END - START) * 3600 ))
 Nice=19
 Restart=no
+# No root needed: run as a throwaway user. Don't add PrivateDevices=, it hides the GPU.
+DynamicUser=yes
+ProtectHome=yes
+$GPU_GROUPS
 EOF
 
     cat > "$UNIT_DIR/thermalbloater.timer" <<EOF

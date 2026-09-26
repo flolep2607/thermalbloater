@@ -74,7 +74,7 @@ schtasks /create /tn thermalbloater-stop /tr "taskkill /im thermalbloater.exe /f
 ## Usage
 
 ```text
-thermalbloater [matrix-size] [batch-size] [--math f32|f16|bf16] [--gpu-max C] [--calibrate-secs S] [--status-interval SECONDS]
+thermalbloater [matrix-size] [batch-size] [--math f32|f16|bf16] [--gpus 0,1] [--gpu-max C] [--calibrate-secs S] [--status-interval SECONDS]
 ```
 
 By default, with no positional arguments, thermalbloater **autotunes**: it briefly runs each candidate workload on every GPU, reads the power draw from NVML, and locks in whichever config pulls the most watts on that specific card. Pin any axis yourself and it drops out of the sweep — pin all three (size, batch, math) and it skips autotuning entirely.
@@ -96,10 +96,10 @@ A typical run looks like this:
 
 ```text
 Calibrating 1 GPU(s) for peak power draw...
-  GPU0 f32 4096x4096 SGEMM x11 (~2112 MiB VRAM) -> 231 W
-  GPU0 f16 2048x2048 SGEMM x93 (~2232 MiB VRAM) -> 199 W
+  GPU0 f32 4096x4096 GEMM x11 (~2112 MiB VRAM) -> 231 W
+  GPU0 f16 2048x2048 GEMM x93 (~2232 MiB VRAM) -> 199 W
   ...
-GPU0: f32 4096x4096 SGEMM x11 (~2112 MiB VRAM)
+GPU0: f32 4096x4096 GEMM x11 (~2112 MiB VRAM)
 Thermostat: GPU max 80C (per GPU).
 GPU0 78C 234W 100%
 ```
@@ -115,6 +115,7 @@ Press `Ctrl+C` when the room is warm enough, or when your electricity provider b
 | `matrix-size`         |  autotuned | Matrix dimension `N` for each `N × N` multiplication. Pinning it skips the size sweep. |
 | `batch-size`          |  autotuned | Number of matrix multiplications submitted per batch. Pinning it skips VRAM-based batch sizing. |
 | `--math f32\|f16\|bf16` | autotuned | Arithmetic type: `f32` (CUDA cores) or `f16`/`bf16` (tensor cores). Pinning it skips the math sweep. |
+| `--gpus 0,1`          |     all | Comma-separated GPU indices to heat. The others are left alone. |
 | `--gpu-max C`         |    `80` | Maximum target temperature for each GPU. The workload is reduced as the card approaches this limit.          |
 | `--calibrate-secs S`  |     `4` | Seconds spent measuring each candidate config during autotuning. |
 | `--status-interval S` |     `2` | Number of seconds between status updates.                                                                    |
