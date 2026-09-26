@@ -262,6 +262,13 @@ impl GpuWorker {
             ),
         }
     }
+
+    /// Hands queued work to the GPU now. WDDM/WSL drivers batch launches and otherwise
+    /// only submit on synchronize(), which would leave the GPU idle while we sleep.
+    pub fn flush(&self) {
+        // NOT_READY is the expected answer; we only want the side effect.
+        let _ = unsafe { cudarc::driver::sys::lib().cuStreamQuery(*self.dev.cu_stream()) };
+    }
 }
 
 #[allow(clippy::type_complexity)]

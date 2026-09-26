@@ -143,6 +143,7 @@ fn prepare_worker(ordinal: usize, sensors: &Sensors, cfg: &Config) -> Result<Gpu
 
 /// Runs launches back to back, idling between them so the busy fraction tracks the thermostat.
 fn worker_loop(mut worker: GpuWorker, sensors: &Sensors, th: Thermostat) -> Result<(), String> {
+    let mut last_busy = Duration::ZERO;
     while !shutting_down() {
         let load = th.gpu_load(sensors.gpu_status(worker.ordinal).as_ref());
         if load <= 0.0 {
@@ -151,11 +152,16 @@ fn worker_loop(mut worker: GpuWorker, sensors: &Sensors, th: Thermostat) -> Resu
         }
         let start = Instant::now();
         worker.launch()?;
+        // Launches are async and take about as long as the last one: sleep through most of
+        // it so synchronize() only waits (spinning a core, on some drivers) for the tail.
+        worker.flush();
+        nap(last_busy.mul_f32(0.9));
         worker
             .dev
             .synchronize()
             .map_err(|e| format!("GPU{}: CUDA synchronize failed: {e:?}", worker.ordinal))?;
-        nap(thermostat::idle_after(start.elapsed(), load));
+        last_busy = start.elapsed();
+        nap(thermostat::idle_after(last_busy, load));
     }
     Ok(())
 }
